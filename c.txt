@@ -1,0 +1,275 @@
+、介绍
+
+    BufferedInputStream类继承了FilterInputStream对象，是inputStream的修饰者类。能够将输入流先进行缓存，避免每次都需要进行实质性的I/O操作。第一次会缓存8192字节的数据，然后会成倍增长。
+
+二、属性
+
+    privatestatic int defaultBufferSize = 8192;默认缓存区大小。
+
+    protectedvolatile byte buf[];缓冲区数组。
+
+三、构造函数
+
+    publicBufferedInputStream(InputStream in) ;in是被修饰的输入流，创建默认大小的缓冲区。
+
+    publicBufferedInputStream(InputStream in, int size);in是被修饰的输入流,创建指定大小的缓冲区。
+
+四、方法
+
+    publicsynchronized int read() throws IOException;读取缓冲区中的一个字节，缓冲区被全部读取的话讲缓冲区加倍然后填入数据。到达输入流的最后则返回-1;
+
+    publicsynchronized int read(byte b[], int off, int len);读取缓冲区中len个字节，缓冲区被全部读取的话讲缓冲区加倍然后填入数据然后继续读取。返回实际读取的字节数，或则-1;
+
+    publicsynchronized long skip(long n) throws IOException;跳过N个字节数据，直到流的最后，返回实际跳过的字节数或则-1;
+
+    publicsynchronized int available() throws IOException;返回流的剩余字节数。
+
+    publicsynchronized void mark(int readlimit);标记流读取的当前位置。
+
+    publicsynchronized void reset() throws IOException;返回到最近一次mark的位置。
+
+public void close() throws IOException关闭当前数据流;
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+BufferedInputStream是一个带有缓冲区域的InputStream,它的继承体系如下： 
+
+InputStream 
+|__FilterInputStream 
+        |__BufferedInputStream 
+
+首先了解一下FilterInputStream： 
+FilterInputStream通过装饰器模式将InputStream封装至内部的一个成员变量： 
+
+Java代码  
+
+1.  protected volatile InputStream in;  
+
+
+需要注意的是该成员变量使用了volatile关键字进行修饰，这意味着该成员变量的引用的内存可见性为多线程即时可见的。 
+其它地方FilterInputStream将所有的操作委托给了in这个成员进行操作。 
+
+ 
+
+了解了这些过后，来仔细看看BufferedInputStream的成员变量： 
+
+Java代码  
+
+1.  private static int defaultBufferSize = 8192 //该变量定义了默认的缓冲大小  
+
+2.    
+
+3.  protected volatile byte buf[]; //缓冲数组，注意该成员变量同样使用了volatile关键字进行修饰，作用为在多线程环境中，当对该变量引用进行修改时保证了内存的可见性。  
+
+4.    
+
+5.  private static final AtomicReferenceFieldUpdater<BufferedInputStream, byte[]> bufUpdater = AtomicReferenceFieldUpdater.newUpdater(BufferedInputStream.class,  byte[].class, "buf")//缓存数组的原子更新器，该成员变量与buf数组的volatile关键字共同组成了buf数组的原子更新功能实现。  
+
+6.    
+
+7.  protected int count;//该成员变量表示目前缓冲区域中有多少有效的字节。  
+
+8.    
+
+9.  protected int pos;//该成员变量表示了当前缓冲区的读取位置。  
+
+10.   
+
+11. protected int markpos = -1;/*表示标记位置，该标记位置的作用为：实现流的标记特性，即流的某个位置可以被设置为标记，允许通过设置reset()，将流的读取位置进行重置到该标记位置，但是InputStream注释上明确表示，该流不会无限的保证标记长度可以无限延长，即markpos=15,pos=139734，该保留区间可能已经超过了保留的极限（如下）*/  
+
+12.   
+
+13. protected int marklimit;/*该成员变量表示了上面提到的标记最大保留区间大小，当pos-markpos> marklimit时，mark标记可能会被清除（根据实现确定）。*/  
+
+
+
+
+通过构造函数可以看到：初始化了一个byte数组作为缓冲区域 
+
+Java代码  
+
+1.  public BufferedInputStream(InputStream in, int size) {  
+
+2.      super(in);  
+
+3.          if (size <= 0) {  
+
+4.              throw new IllegalArgumentException("Buffer size <= 0");  
+
+5.          }  
+
+6.      buf = new byte[size];  
+
+7.  }  
+
+
+
+
+这个类中最为重要的方法是fill()方法，它提供了缓冲区域的读取、写入、区域元素的移动更新等。下面着重分析一下该方法： 
+
+Java代码  
+
+1.  private void fill() throws IOException {  
+
+2.          byte[] buffer = getBufIfOpen();  
+
+3.      if (markpos < 0) ｛  
+
+4.            /*如果不存在标记位置（即没有需要进行reset的位置需求） 
+
+5.              则可以进行大胆地直接重置pos标识下一可读取位置,但是这样 
+
+6.              不是会读取到以前的旧数据吗？不用担心，在后面的代码里☆会实现输入流的新  
+
+7.              数据填充*/  
+
+8.          pos = 0;          
+
+9.      ｝else if (pos >= buffer.length)｛  
+
+10.        /* 位置大于缓冲区长度，这里表示已经没有可用空间了 */  
+
+11.         if (markpos > 0) {     
+
+12.              /* 表示存在mark位置，则要对mark位置到pos位置的数据予以保留， 
+
+13.                 以确保后面如果调用reset()重新从mark位置读取会取得成功*/  
+
+14.         int sz = pos - markpos;  
+
+15.                 /*该实现是通过将缓冲区域中markpos至pos部分的移至缓冲区头部实现*/  
+
+16.         System.arraycopy(buffer, markpos, buffer, 0, sz);  
+
+17.         pos = sz;  
+
+18.         markpos = 0;  
+
+19.         } else if (buffer.length >= marklimit) {  
+
+20.                 /* 如果缓冲区已经足够大，可以容纳marklimit，则直接重置*/  
+
+21.                 markpos = -1;     
+
+22.         pos = 0;/* 丢弃所有的缓冲区内容 */  
+
+23.         } else {          
+
+24.                 /* 如果缓冲区还能增长的空间，则进行缓冲区扩容*/  
+
+25.         int nsz = pos * 2;  
+
+26.                 /*新的缓冲区大小设置成满足最大标记极限即可*/  
+
+27.         if (nsz > marklimit)  
+
+28.             nsz = marklimit;  
+
+29.         byte nbuf[] = new byte[nsz];  
+
+30.                 //将原来的较小的缓冲内容COPY至增容的新缓冲区中  
+
+31.         System.arraycopy(buffer, 0, nbuf, 0, pos);  
+
+32.                 //这里使用了原子变量引用更新，确保多线程环境下内存的可见性  
+
+33.                 if (!bufUpdater.compareAndSet(this, buffer, nbuf)) {  
+
+34.                     // Can't replace buf if there was an async close.  
+
+35.                     // Note: This would need to be changed if fill()  
+
+36.                     // is ever made accessible to multiple threads.  
+
+37.                     // But for now, the only way CAS can fail is via close.  
+
+38.                     // assert buf == null;  
+
+39.                     throw new IOException("Stream closed");  
+
+40.                 }  
+
+41.                 buffer = nbuf;  
+
+42.         }  
+
+43.         count = pos;  
+
+44.         //从原始输入流中读取数据，填充缓冲区  
+
+45.     int n = getInIfOpen().read(buffer, pos, buffer.length - pos);  
+
+46.         //根据实际读取的字节数更新缓冲区中可用字节数  
+
+47.         if (n > 0)  
+
+48.             count = n + pos;  
+
+49.     }  
+
+
+整个fill的过程，可以看作是BufferedInputStream对外提供滑动读取的功能实现，通过预先读入一整段原始输入流数据至缓冲区中，而外界对BufferedInputStream的读取操作实际上是在缓冲区上进行，如果读取的数据超过了缓冲区的范围，那么BufferedInputStream负责重新从原始输入流中载入下一截数据填充缓冲区，然后外界继续通过缓冲区进行数据读取。这样的设计的好处是：避免了大量的磁盘IO，因为原始的InputStream类实现的read是即时读取的，即每一次读取都会是一次磁盘IO操作（哪怕只读取了1个字节的数据），可想而知，如果数据量巨大，这样的磁盘消耗非常可怕。而通过缓冲区的实现，读取可以读取缓冲区中的内容，当读取超过缓冲区的内容后再进行一次磁盘IO，载入一段数据填充缓冲，那么下一次读取一般情况下就直接可以从缓冲区读取，减少了磁盘IO。减少的磁盘IO大致可以通过以下方式计算（限read()方式）： 
+
+length  流的最终大小 
+bufSize 缓冲区大小 
+
+则通过缓冲区实现的输入流BufferedInputStream的磁盘IO数为原始InputStream磁盘IO的 
+1/(length/bufSize) 
+
+read方法解析：该方法返回当前位置的后一位置byte值（int表示）. 
+
+Java代码  
+
+1.  public synchronized int read() throws IOException {  
+
+2.      if (pos >= count) {  
+
+3.             /*表示读取位置已经超过了缓冲区可用范围，则对缓冲区进行重新填充*/  
+
+4.          fill();  
+
+5.             /*当填充后再次读取时发现没有数据可读，证明读到了流末尾*/  
+
+6.          if (pos >= count)  
+
+7.          return -1;  
+
+8.      }  
+
+9.          /*这里表示读取位置尚未超过缓冲区有效范围，直接返回缓冲区内容*/  
+
+10.     return getBufIfOpen()[pos++] & 0xff;  
+
+11. }  
+
+
+
+一次读取多个字节（尽量读，非贪婪) 
+
+Java代码  
+
+1.  private int read1(byte[] b, int off, int len) throws IOException {  
+
+2.      int avail = count - pos;  
+
+3.      if (avail <= 0) {  
+
+4.          /*这里使用了一个巧妙的机制，如果读取的长度大于缓冲区的长度 
+
+5.                并且没有markpos，则直接从原始输入流中进行读取，从而避免无谓的 
+
+6.                COPY（从原始输入流至缓冲区，读取缓冲区全部数据，清空缓冲区， 
+
+7.                重新填入原始输入流数据）*/  
+
+8.          if (len >= getBufIfOpen().length && markpos < 0) {  
+
+9.          return getInIfOpen().read(b, off, len);  
